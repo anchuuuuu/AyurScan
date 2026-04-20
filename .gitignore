@@ -1,0 +1,20 @@
+# Environments
+myenv/
+conda_env/
+bin/
+__pycache__/
+*.pyc
+
+# Secrets and Configs
+.env
+.DS_Store
+
+# Large Datasets
+Indian Medicinal Leaves Image Datasets/
+
+# Uploads
+static/uploads/
+
+# Large Model Files
+# Ignoring the massive 228MB model, keeping the optimized ones for deployment
+custom_medicinal_leaf_model.h5

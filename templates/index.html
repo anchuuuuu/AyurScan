@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AyurScan | Ayurvedic Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .leaf-gradient { background: linear-gradient(135deg, #1e3a1a 0%, #2d5a27 100%); }
+        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid #e2e8f0; }
+        .upload-area { transition: all 0.3s ease; }
+        .upload-area:hover { border-color: #16a34a; background: #f0fdf4; }
+    </style>
+</head>
+<body class="bg-stone-50 min-h-screen">
+
+    <header class="leaf-gradient text-white py-4 shadow-md">
+        <div class="container mx-auto px-6 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <i class="fas fa-leaf text-green-400"></i>
+                <h1 class="font-bold text-xl uppercase tracking-widest">AyurScan AI</h1>
+            </div>
+            <span class="text-xs bg-green-900/50 px-3 py-1 rounded-full text-green-200">80 Species Database</span>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8 max-w-6xl">
+        <div class="flex flex-col lg:flex-row gap-8">
+            
+            <div class="lg:w-1/3 space-y-6">
+                <div class="glass-card p-6 rounded-3xl shadow-lg">
+                    <h2 class="text-lg font-bold text-gray-800 mb-4">Step 1: Upload Leaf</h2>
+                    
+                    <div id="dropZone" class="upload-area border-2 border-dashed border-stone-300 rounded-2xl p-6 text-center cursor-pointer relative">
+                        <input type="file" id="fileInput" class="hidden" accept="image/*">
+                        
+                        <div id="uploadContent">
+                            <i class="fas fa-image text-3xl text-stone-400 mb-2"></i>
+                            <p class="text-sm text-stone-500">Tap to Change or Select File</p>
+                        </div>
+                        
+                        <img id="preview" class="hidden mx-auto mt-4 rounded-lg shadow-sm border border-stone-200 max-h-48 object-contain">
+                    </div>
+
+                    <button id="analyzeBtn" class="w-full mt-6 bg-green-800 text-white font-bold py-4 rounded-xl hover:bg-green-900 transition flex items-center justify-center gap-3 shadow-md">
+                        <span id="btnText">ANALYZE NOW</span>
+                        <i id="btnIcon" class="fas fa-bolt"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="lg:w-2/3">
+                <!-- Welcome State -->
+                <div id="welcomeState" class="h-full flex flex-col items-center justify-center text-center p-10 border-2 border-dashed border-stone-200 rounded-3xl">
+                    <i class="fas fa-seedling text-5xl text-stone-200 mb-4"></i>
+                    <h3 class="text-xl font-medium text-stone-400">Analysis results will appear here</h3>
+                    <p class="text-stone-400 text-sm mt-2">Upload a clear photo of the medicinal leaf for best accuracy.</p>
+                </div>
+
+                <!-- Loading State -->
+                <div id="loading" class="hidden h-full flex flex-col items-center justify-center text-center p-10">
+                    <div class="animate-spin rounded-full h-12 w-12 border-t-4 border-green-800 border-solid mb-4"></div>
+                    <p class="text-green-800 font-medium italic">Processing through CNN Layers...</p>
+                </div>
+
+                <!-- Results State -->
+                <div id="results" class="hidden h-full space-y-6">
+                    <div class="glass-card p-8 rounded-3xl shadow-xl border-t-8 border-green-800">
+                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <div>
+                                <h2 id="plantTitle" class="text-4xl font-black text-green-900">Plant Name</h2>
+                                <p class="text-stone-500 mt-1 italic">Botanical Identification Confirmed</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-sm font-bold text-stone-400 uppercase tracking-widest">Confidence Match</p>
+                                <p id="confidenceScore" class="text-3xl font-bold text-green-600">98%</p>
+                            </div>
+                        </div>
+
+                        <div class="mt-8 bg-stone-50 rounded-2xl p-6 border border-stone-200">
+                            <h3 class="text-lg font-bold text-green-900 mb-3 border-b border-stone-200 pb-2">Ayurvedic Insight</h3>
+                            <p id="plantDetails" class="text-stone-700 leading-relaxed text-lg">Loading details...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error Card -->
+                <div class="glass-card p-6 rounded-3xl shadow-lg hidden border border-red-200 bg-red-50" id="errorCard">
+                    <div class="flex items-center gap-3 text-red-600 mb-2">
+                        <i class="fas fa-exclamation-circle text-xl"></i>
+                        <h3 class="font-bold text-lg">Analysis Failed</h3>
+                    </div>
+                    <p class="text-red-700" id="errorText">Could not connect to the server.</p>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const uploadContent = document.getElementById('uploadContent');
+        const preview = document.getElementById('preview');
+        
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const btnText = document.getElementById('btnText');
+        const btnIcon = document.getElementById('btnIcon');
+        
+        const welcomeState = document.getElementById('welcomeState');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+        const plantTitle = document.getElementById('plantTitle');
+        const confidenceScore = document.getElementById('confidenceScore');
+        const plantDetails = document.getElementById('plantDetails');
+        
+        const errorCard = document.getElementById('errorCard');
+        const errorText = document.getElementById('errorText');
+
+        let selectedFile = null;
+
+        // File Selection Handlers
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) handleFile(e.target.files[0]);
+        });
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('border-green-500', 'bg-green-50');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('border-green-500', 'bg-green-50');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-green-500', 'bg-green-50');
+            if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+        });
+
+        function handleFile(file) {
+            selectedFile = file;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                preview.src = e.target.result;
+                preview.classList.remove('hidden');
+                uploadContent.classList.add('hidden');
+            };
+            reader.readAsDataURL(file);
+            
+            // Reset right side
+            welcomeState.classList.remove('hidden');
+            results.classList.add('hidden');
+            errorCard.classList.add('hidden');
+        }
+
+        // Analysis Handler
+        analyzeBtn.addEventListener('click', async () => {
+            if (!selectedFile) {
+                alert("Please select a leaf image first!");
+                return;
+            }
+
+            // Set Loading UI
+            analyzeBtn.disabled = true;
+            btnText.innerText = "ANALYZING...";
+            btnIcon.className = "fas fa-spinner fa-spin";
+            
+            welcomeState.classList.add('hidden');
+            results.classList.add('hidden');
+            errorCard.classList.add('hidden');
+            loading.classList.remove('hidden');
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || "Server error occurred");
+                }
+
+                // Show results
+                plantTitle.innerText = data.plant;
+                confidenceScore.innerText = data.confidence + '%';
+                plantDetails.innerHTML = data.details;
+                
+                loading.classList.add('hidden');
+                results.classList.remove('hidden');
+
+            } catch (err) {
+                loading.classList.add('hidden');
+                errorText.innerText = err.message || "An unexpected error occurred.";
+                errorCard.classList.remove('hidden');
+            } finally {
+                // Reset Button
+                analyzeBtn.disabled = false;
+                btnText.innerText = "ANALYZE NOW";
+                btnIcon.className = "fas fa-bolt";
+            }
+        });
+    </script>
+</body>
+</html>
