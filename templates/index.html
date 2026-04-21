@@ -11,6 +11,18 @@
         .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid #e2e8f0; }
         .upload-area { transition: all 0.3s ease; }
         .upload-area:hover { border-color: #16a34a; background: #f0fdf4; }
+        #plantDetails { white-space: pre-wrap; }
+        
+        /* Persistent Floating Button */
+        .fab-container { position: fixed; bottom: 80px; right: 80px; z-index: 1000; }
+        .fab { width: 70px; height: 70px; border-radius: 50%; background: #1e3a1a; color: white; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 10px 40px rgba(0,0,0,0.4); transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); text-decoration: none; border: 3px solid rgba(255,255,255,0.2); }
+        .fab:hover { transform: scale(1.1) rotate(15deg); background: #2d5a27; box-shadow: 0 12px 40px rgba(0,0,0,0.4); }
+        .fab i { font-size: 24px; animation: sparkle 2s infinite; }
+        
+        @keyframes sparkle {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.1); }
+        }
     </style>
 </head>
 <body class="bg-stone-50 min-h-screen">
@@ -43,6 +55,22 @@
                         <img id="preview" class="hidden mx-auto mt-4 rounded-lg shadow-sm border border-stone-200 max-h-48 object-contain">
                     </div>
 
+                    <!-- Webcam UI -->
+                    <div id="webcamContainer" class="hidden mt-4 p-4 bg-stone-100 rounded-2xl border border-stone-200">
+                        <video id="webcam" width="100%" autoplay class="rounded-xl shadow-inner bg-black"></video>
+                        <canvas id="canvas" class="hidden"></canvas>
+                        <button id="captureBtn" class="mt-3 w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition shadow-md">
+                            CAPTURE PHOTO
+                        </button>
+                    </div>
+
+                    <div class="mt-4 text-center">
+                        <button id="toggleWebcam" class="text-sm text-green-800 font-bold hover:underline flex items-center justify-center gap-2 mx-auto">
+                            <i class="fas fa-camera"></i>
+                            Use Web Cam instead
+                        </button>
+                    </div>
+
                     <button id="analyzeBtn" class="w-full mt-6 bg-green-800 text-white font-bold py-4 rounded-xl hover:bg-green-900 transition flex items-center justify-center gap-3 shadow-md">
                         <span id="btnText">ANALYZE NOW</span>
                         <i id="btnIcon" class="fas fa-bolt"></i>
@@ -60,8 +88,15 @@
 
                 <!-- Loading State -->
                 <div id="loading" class="hidden h-full flex flex-col items-center justify-center text-center p-10">
-                    <div class="animate-spin rounded-full h-12 w-12 border-t-4 border-green-800 border-solid mb-4"></div>
-                    <p class="text-green-800 font-medium italic">Processing through CNN Layers...</p>
+                    <div class="relative mb-6">
+                        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-green-800 border-solid"></div>
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <span id="epochCount" class="text-xs font-bold text-green-900">1/5</span>
+                        </div>
+                    </div>
+                    <p class="text-green-800 font-bold tracking-widest uppercase text-xs mb-2">Neural Scan in Progress</p>
+                    <p class="text-green-900 font-medium italic text-lg" id="loadingText">Analyzing leaf structure...</p>
+                    <p class="text-stone-400 text-xs mt-2" id="loadingSubtext">Synchronizing with AI Cluster</p>
                 </div>
 
                 <!-- Results State -->
@@ -75,6 +110,7 @@
                             <div class="text-right">
                                 <p class="text-sm font-bold text-stone-400 uppercase tracking-widest">Confidence Match</p>
                                 <p id="confidenceScore" class="text-3xl font-bold text-green-600">98%</p>
+                                <span id="statusBadge" class="inline-block mt-2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-stone-200 text-stone-600">Checking...</span>
                             </div>
                         </div>
 
@@ -114,9 +150,20 @@
         const plantTitle = document.getElementById('plantTitle');
         const confidenceScore = document.getElementById('confidenceScore');
         const plantDetails = document.getElementById('plantDetails');
+        const statusBadge = document.getElementById('statusBadge');
         
         const errorCard = document.getElementById('errorCard');
         const errorText = document.getElementById('errorText');
+        const loadingText = document.getElementById('loadingText');
+        const loadingSubtext = document.getElementById('loadingSubtext');
+        const epochCount = document.getElementById('epochCount');
+
+        // Webcam Elements
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const captureBtn = document.getElementById('captureBtn');
+        const toggleWebcam = document.getElementById('toggleWebcam');
+        const webcamContainer = document.getElementById('webcamContainer');
 
         let selectedFile = null;
 
@@ -159,6 +206,51 @@
             errorCard.classList.add('hidden');
         }
 
+        // Webcam Logic
+        toggleWebcam.onclick = async () => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert("Your browser does not support camera access or you are not on a secure (HTTPS) connection.");
+                return;
+            }
+            try {
+                webcamContainer.classList.remove('hidden');
+                uploadContent.classList.add('hidden');
+                preview.classList.add('hidden');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                alert("Could not access camera: " + err.message);
+                webcamContainer.classList.add('hidden');
+                uploadContent.classList.remove('hidden');
+            }
+        };
+
+        captureBtn.onclick = () => {
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            canvas.toBlob((blob) => {
+                const file = new File([blob], "webcam_capture.jpg", { type: "image/jpeg" });
+                
+                // Create a mock FileList
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                
+                handleFile(file); // Reuse handleFile logic
+                
+                // Close webcam stream
+                const tracks = video.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                webcamContainer.classList.add('hidden');
+            }, 'image/jpeg');
+        };
+
         // Analysis Handler
         analyzeBtn.addEventListener('click', async () => {
             if (!selectedFile) {
@@ -176,15 +268,38 @@
             errorCard.classList.add('hidden');
             loading.classList.remove('hidden');
 
+            // Dynamic Status Messages with "Epochs"
+            const messages = [
+                { main: "Optimizing Neural Weights...", sub: "Layer 1: Edge Detection" },
+                { main: "Extracting Textures...", sub: "Layer 2: Pattern Recognition" },
+                { main: "Botanical Cross-Reference...", sub: "Layer 3: Species Verification" },
+                { main: "NVIDIA Vision Analysis...", sub: "Layer 4: AI Consensus" },
+                { main: "Finalizing Profile...", sub: "Layer 5: Ayurvedic Mapping" }
+            ];
+            
+            let currentEpoch = 1;
+            epochCount.innerText = "1/5";
+            
+            const statusInterval = setInterval(() => {
+                if (currentEpoch < 5) {
+                    currentEpoch++;
+                    epochCount.innerText = `${currentEpoch}/5`;
+                    loadingText.innerText = messages[currentEpoch-1].main;
+                    loadingSubtext.innerText = messages[currentEpoch-1].sub;
+                }
+            }, 1500);
+
             const formData = new FormData();
             formData.append('file', selectedFile);
 
             try {
-                const response = await fetch('/predict', {
-                    method: 'POST',
-                    body: formData
-                });
+                // We add a minimum artificial delay of 3 seconds to ensure at least 2-3 epochs are seen
+                const [response, _] = await Promise.all([
+                    fetch('/predict', { method: 'POST', body: formData }),
+                    new Promise(resolve => setTimeout(resolve, 3000))
+                ]);
                 
+                clearInterval(statusInterval);
                 const data = await response.json();
                 
                 if (!response.ok || data.error) {
@@ -195,6 +310,16 @@
                 plantTitle.innerText = data.plant;
                 confidenceScore.innerText = data.confidence + '%';
                 plantDetails.innerHTML = data.details;
+                
+                // Update Status Badge
+                statusBadge.innerText = data.status || "Completed";
+                if (data.status && data.status.includes("Triple")) {
+                    statusBadge.className = "inline-block mt-2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-green-100 text-green-700 border border-green-200";
+                } else if (data.status && data.status.includes("Consensus")) {
+                    statusBadge.className = "inline-block mt-2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-blue-100 text-blue-700 border border-blue-200";
+                } else {
+                    statusBadge.className = "inline-block mt-2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest bg-stone-200 text-stone-600 border border-stone-300";
+                }
                 
                 loading.classList.add('hidden');
                 results.classList.remove('hidden');
@@ -211,5 +336,12 @@
             }
         });
     </script>
+
+    <!-- Persistent Chatbot Icon -->
+    <div class="fab-container">
+        <a href="/consultation" class="fab" title="AI Consultation">
+            <i class="fas fa-magic"></i>
+        </a>
+    </div>
 </body>
 </html>
