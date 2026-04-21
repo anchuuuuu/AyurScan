@@ -18,3 +18,4 @@ static/uploads/
 # Large Model Files
 # Ignoring the massive 228MB model, keeping the optimized ones for deployment
 custom_medicinal_leaf_model.h5
+*.h5

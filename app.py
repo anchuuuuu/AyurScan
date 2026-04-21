@@ -189,39 +189,49 @@ def model_predict(img_path, epoch_num):
     # Load and Enhance
     img = Image.open(img_path).convert("RGB")
     
-    # --- ACCURACY BOOST: Image Sharpening ---
-    enhancer = ImageEnhance.Sharpness(img)
-    img = enhancer.enhance(1.5) 
+    # --- ACCURACY BOOST 1: Contrast & Sharpness Enhancement ---
+    # Enhance contrast to make leaf veins more visible
+    img = ImageEnhance.Contrast(img).enhance(1.2)
+    # Enhance sharpness for better edge detection
+    img = ImageEnhance.Sharpness(img).enhance(1.6) 
     
     # SMART RESIZE: Detect if model needs 224 (old) or 300 (new EfficientNet)
     try:
-        # Check input shape of the loaded model
         target_size = model.input_shape[1] 
     except:
-        target_size = 224 # Fallback
+        target_size = 224 
     
+    # --- ACCURACY BOOST 2: Multiscale TTA (Random Zoom) ---
+    if epoch_num > 1:
+        # Random zoom between 100% and 120%
+        zoom_factor = random.uniform(1.0, 1.2)
+        w, h = img.size
+        new_w, new_h = int(w / zoom_factor), int(h / zoom_factor)
+        left = (w - new_w) / 2
+        top = (h - new_h) / 2
+        img = img.crop((left, top, left + new_w, top + new_h))
+
     img = img.resize((target_size, target_size))
     x = image.img_to_array(img)
     
-    # --- ENHANCED TEST TIME AUGMENTATION (TTA) ---
+    # --- ACCURACY BOOST 3: Geometry TTA ---
     if epoch_num > 1:
-        # Random horizontal flip
-        if random.random() > 0.5:
-            x = np.fliplr(x)
-        # Random Rotation (+/- 15 degrees)
-        angle = random.uniform(-15, 15)
-        temp_img = Image.fromarray(x.astype('uint8'))
-        temp_img = temp_img.rotate(angle)
+        # Random horizontal/vertical flips
+        if random.random() > 0.5: x = np.fliplr(x)
+        if random.random() > 0.5: x = np.flipud(x)
+        
+        # Random Rotation (+/- 20 degrees)
+        angle = random.uniform(-20, 20)
+        temp_img = Image.fromarray(x.astype('uint8')).rotate(angle)
         x = np.array(temp_img)
+        
         # Random brightness adjustment
-        brightness = random.uniform(0.9, 1.1)
-        x = x * brightness
+        x = x * random.uniform(0.85, 1.15)
         x = np.clip(x, 0, 255)
 
     x = np.expand_dims(x, axis=0)
     
-    # Preprocessing: Only rescale for the older models (224px)
-    # EfficientNet (300px) handles its own scaling
+    # Preprocessing
     if target_size == 224:
         x = (x / 127.5) - 1.0
     
@@ -229,8 +239,12 @@ def model_predict(img_path, epoch_num):
     preds1 = model.predict(x, verbose=0)
     if HAS_ENSEMBLE:
         preds2 = model2.predict(x, verbose=0)
-        # Average the two models
-        return (preds1 + preds2) / 2.0
+        # Confidence-Weighted Averaging (Boosts accuracy if one model is very sure)
+        conf1 = np.max(preds1)
+        conf2 = np.max(preds2)
+        w1 = conf1 / (conf1 + conf2)
+        w2 = conf2 / (conf1 + conf2)
+        return (preds1 * w1 + preds2 * w2)
     
     return preds1
 
