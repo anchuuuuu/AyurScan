@@ -5,6 +5,8 @@ import tensorflow as tf
 from flask import Flask, render_template, request, jsonify
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import load_model
+from tensorflow.keras.layers import DepthwiseConv2D, InputLayer
+from tensorflow.keras.applications.efficientnet import preprocess_input
 from PIL import Image, ImageEnhance
 import io
 import requests
@@ -37,17 +39,54 @@ JSON_PATH = 'class_indices.json'
 UPLOAD_FOLDER = 'static/uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# --- KERAS 3 COMPATIBILITY FIX ---
+class FixedDepthwiseConv2D(DepthwiseConv2D):
+    def __init__(self, **kwargs):
+        if 'groups' in kwargs:
+            kwargs.pop('groups')
+        super().__init__(**kwargs)
+
+class FixedInputLayer(InputLayer):
+    def __init__(self, **kwargs):
+        # Strip Keras 3 unrecognized arguments
+        for arg in ['batch_shape', 'optional']:
+            if arg in kwargs:
+                kwargs.pop(arg)
+        super().__init__(**kwargs)
+
+CUSTOM_OBJECTS = {
+    'DepthwiseConv2D': FixedDepthwiseConv2D,
+    'InputLayer': FixedInputLayer
+}
+
+# Specialist Model Mapping (Aloevera, Neem, Tulsi)
+SPECIALIST_CLASSES = {0: "Aloevera", 1: "Neem", 2: "Tulsi"}
+# Map specialist names back to 80-class indices for easier comparison
+# Note: These must match the labels in class_names.json exactly
+SPECIALIST_TO_GENERAL_MAP = {
+    "Aloevera": "0", 
+    "Neem": "49",
+    "Tulsi": "74"
+}
+
 # Load the AI Brain (Ensemble Mode)
 print("⏳ Loading Primary AI Model...")
-model = load_model(MODEL_PATH)
+try:
+    model = load_model(MODEL_PATH, custom_objects=CUSTOM_OBJECTS)
+except Exception as e:
+    print(f"❌ Primary Model Load Failed: {e}")
+    # Fallback to model 2 or raise
+    raise e
+
 print("⏳ Loading Secondary AI Model for Ensemble...")
 try:
-    model2 = load_model(MODEL_PATH_2)
+    model2 = load_model(MODEL_PATH_2, custom_objects=CUSTOM_OBJECTS)
     HAS_ENSEMBLE = True
     print("✅ Ensemble Active (Dual Models).")
-except:
+except Exception as e:
     HAS_ENSEMBLE = False
-    print("⚠️ Secondary model not found. Running in Single Model mode.")
+    print(f"⚠️ Secondary model not found or incompatible: {e}")
+    print("⚠️ Running in Single Model mode.")
 
 # Load the Plant Names
 with open(JSON_PATH, 'r') as f:
@@ -216,37 +255,46 @@ def model_predict(img_path, epoch_num):
     
     # --- ACCURACY BOOST 3: Geometry TTA ---
     if epoch_num > 1:
-        # Random horizontal/vertical flips
+        # Random rotation/flip TTA
         if random.random() > 0.5: x = np.fliplr(x)
         if random.random() > 0.5: x = np.flipud(x)
         
-        # Random Rotation (+/- 20 degrees)
-        angle = random.uniform(-20, 20)
+        angle = random.uniform(-25, 25)
         temp_img = Image.fromarray(x.astype('uint8')).rotate(angle)
         x = np.array(temp_img)
         
-        # Random brightness adjustment
-        x = x * random.uniform(0.85, 1.15)
-        x = np.clip(x, 0, 255)
+    # --- ACCURACY BOOST 4: Lighting TTA (Always apply a little) ---
+    brightness = random.uniform(0.8, 1.2) if epoch_num > 1 else random.uniform(0.95, 1.05)
+    x = x * brightness
+    x = np.clip(x, 0, 255)
 
     x = np.expand_dims(x, axis=0)
     
-    # Preprocessing
+    # --- MODEL 1 PREDICTION (80-CLASS) ---
+    x1 = np.copy(x)
     if target_size == 224:
-        x = (x / 127.5) - 1.0
+        x1 = (x1 / 127.5) - 1.0 # Legacy scaling
+    else:
+        x1 = preprocess_input(x1) # EfficientNet scaling
     
-    # Run predictions on all available models
-    preds1 = model.predict(x, verbose=0)
+    preds1 = model.predict(x1, verbose=0)
+    
+    # --- MODEL 2 PREDICTION (SPECIALIST 3-CLASS) ---
     if HAS_ENSEMBLE:
-        preds2 = model2.predict(x, verbose=0)
-        # Confidence-Weighted Averaging (Boosts accuracy if one model is very sure)
-        conf1 = np.max(preds1)
-        conf2 = np.max(preds2)
-        w1 = conf1 / (conf1 + conf2)
-        w2 = conf2 / (conf1 + conf2)
-        return (preds1 * w1 + preds2 * w2)
+        # Specialist model was trained with 224x224 and 1/255 rescaling
+        x2 = np.copy(x)
+        if x2.shape[1] != 224:
+            # Resize if necessary (though usually target_size handles this)
+            temp_img = Image.fromarray(x2[0].astype('uint8')).resize((224, 224))
+            x2 = np.expand_dims(np.array(temp_img), axis=0)
+            
+        x2 = x2 / 255.0 # Specialist 1/255 scaling
+        preds2 = model2.predict(x2, verbose=0)
+        
+        # We return both for the smarter ensemble in predict()
+        return preds1, preds2
     
-    return preds1
+    return preds1, None
 
 @app.route('/')
 def home():
@@ -266,19 +314,43 @@ def predict():
         file.save(file_path)
     
         # --- 5 EPOCH LOCAL ANALYSIS PROCESS ---
-        all_preds = []
-        print(f"📡 Starting 5-Epoch Local Botanical Scan...")
+        all_preds1 = []
+        all_preds2 = []
+        print(f"📡 Starting 5-Epoch Local Botanical Scan (Ensemble Mode)...")
         for i in range(1, 6):
-            preds = model_predict(file_path, i)
-            all_preds.append(preds)
+            p1, p2 = model_predict(file_path, i)
+            all_preds1.append(p1)
+            if p2 is not None: all_preds2.append(p2)
         
-        # Calculate Final Local Result
-        avg_preds = np.mean(all_preds, axis=0)
-        pred_idx = str(np.argmax(avg_preds[0]))
-        confidence = float(np.max(avg_preds[0]) * 100)
+        # Calculate Final Local Results
+        avg_preds1 = np.mean(all_preds1, axis=0)
+        pred_idx = str(np.argmax(avg_preds1[0]))
+        confidence = float(np.max(avg_preds1[0]) * 100)
         plant_name = class_indices.get(pred_idx, "Unknown Species")
+        
+        # Specialist Cross-Check
+        if HAS_ENSEMBLE and all_preds2:
+            avg_preds2 = np.mean(all_preds2, axis=0)
+            spec_idx = np.argmax(avg_preds2[0])
+            spec_conf = float(np.max(avg_preds2[0]) * 100)
+            spec_name = SPECIALIST_CLASSES.get(spec_idx)
+            
+            print(f"🛡️ Specialist Model Check: {spec_name} ({spec_conf:.2f}%)")
+            
+            # If specialist is very sure and general model somewhat agrees
+            if spec_conf > 85:
+                # Get the 80-class mapping for this specialist name
+                gen_idx = SPECIALIST_TO_GENERAL_MAP.get(spec_name)
+                # Check if this name is in top 5 of general model
+                top_5_indices = np.argsort(avg_preds1[0])[-5:]
+                if int(gen_idx) in top_5_indices:
+                    # HEAVY BOOST: specialist overruled/boosted general prediction
+                    plant_name = spec_name
+                    confidence = (confidence + spec_conf) / 2
+                    print(f"🔥 SPECIALIST BOOST TRIGGERED: {plant_name}")
+
         confidence = round(confidence, 2)
-        print(f"✅ Local Analysis Complete: {plant_name} ({confidence}%)")
+        print(f"✅ Ensemble Analysis Complete: {plant_name} ({confidence}%)")
     
         # --- POST-SCAN API VERIFICATION ---
         print(f"🔍 Starting Cloud Verification...")
@@ -288,25 +360,40 @@ def predict():
             api1_name = future1.result(timeout=60)
             api2_name = future2.result(timeout=60)
         
-        # --- CONSENSUS LOGIC ---
+        # --- REFINED CONSENSUS LOGIC ---
         final_plant = plant_name
-        status = "Botanical Match Confirmed"
-        if api1_name and api2_name:
+        status = "Local Prediction (Low Confidence)"
+        
+        if confidence >= 80:
+            status = "High-Confidence Local Scan"
+        elif confidence >= 60:
+            status = "Standard Local Scan"
+
+        if api1_name or api2_name:
             l_low = plant_name.lower()
-            a1_low = api1_name.lower()
-            a2_low = api2_name.lower()
-            api_agreement = (a1_low in a2_low or a2_low in a1_low)
-            local_api1_match = (a1_low in l_low or l_low in a1_low)
-            local_api2_match = (a2_low in l_low or l_low in a2_low)
+            a1_low = (api1_name.lower() if api1_name else "")
+            a2_low = (api2_name.lower() if api2_name else "")
             
-            if confidence < 35:
-                final_plant = api1_name if api1_name else api2_name
-            else:
-                if not local_api1_match and not local_api2_match and api_agreement:
-                    final_plant = api1_name
-        elif api1_name:
-            if confidence < 35:
+            api_agreement = (a1_low and a2_low and (a1_low in a2_low or a2_low in a1_low))
+            local_api1_match = (a1_low and (a1_low in l_low or l_low in a1_low))
+            local_api2_match = (a2_low and (a2_low in l_low or l_low in a2_low))
+            
+            # Priority 1: If Cloud APIs agree but local doesn't, trust Cloud (Handles Overfitting)
+            if api_agreement and not local_api1_match:
                 final_plant = api1_name
+                status = "Cloud Expert Consensus (Overruled Local)"
+            
+            # Priority 2: If local matches any Cloud API, confirm it
+            elif local_api1_match or local_api2_match:
+                status = "Botanical Match Confirmed (Local + Cloud)"
+                # Use the Cloud name for better formatting if they match
+                if local_api1_match: final_plant = api1_name
+                elif local_api2_match: final_plant = api2_name
+                
+            # Priority 3: If local is weak (<60%) and we have ANY cloud result, trust cloud
+            elif confidence < 60 and (api1_name or api2_name):
+                final_plant = api1_name if api1_name else api2_name
+                status = "Cloud Expert Identification"
     
         # Fetch Ayurvedic Details
         details = get_ayurvedic_details_api(final_plant)
