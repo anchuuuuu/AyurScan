@@ -48,15 +48,26 @@ class FixedDepthwiseConv2D(DepthwiseConv2D):
 
 class FixedInputLayer(InputLayer):
     def __init__(self, **kwargs):
+        # Keras 3 compatibility
+        if 'batch_shape' in kwargs and 'shape' not in kwargs:
+            kwargs['shape'] = kwargs['batch_shape'][1:]
         # Strip Keras 3 unrecognized arguments
         for arg in ['batch_shape', 'optional']:
             if arg in kwargs:
                 kwargs.pop(arg)
         super().__init__(**kwargs)
 
+class FixedDTypePolicy:
+    def __init__(self, name='float32', **kwargs):
+        self.name = name
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
 CUSTOM_OBJECTS = {
     'DepthwiseConv2D': FixedDepthwiseConv2D,
-    'InputLayer': FixedInputLayer
+    'InputLayer': FixedInputLayer,
+    'DTypePolicy': FixedDTypePolicy
 }
 
 # Specialist Model Mapping (Aloevera, Neem, Tulsi)
